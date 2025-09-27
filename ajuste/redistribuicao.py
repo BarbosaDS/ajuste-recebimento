@@ -1,54 +1,124 @@
+from typing import Dict, Tuple
+from decimal import Decimal, ROUND_HALF_UP
 import pandas as pd
 
-# Lógica de redistribuição por rodadas (greedy por pulmão)
+def _to_dec(x) -> Decimal:
+    return Decimal(str(x if x is not None else 0))
 
-def _rodada_once(df: pd.DataFrame) -> pd.DataFrame:
-    # Listas (índice, valor) para doadores/recebedores
-    doadores = [(i, int(df.loc[i, "sobra_disponivel"])) for i in df.index if df.loc[i, "sobra_disponivel"] > 0]
-    recebedores = [(i, int(df.loc[i, "falta_necessaria"])) for i in df.index if df.loc[i, "falta_necessaria"] > 0]
+def _extrair_basicos(item: Dict) -> Tuple[Decimal, Decimal, Decimal, Decimal, Decimal]:
+    """
+    D = enviou
+    E = recebeu
+    F = sobra bruta = max(E-D, 0)
+    G = falta bruta = max(D-E, 0)
+    M = ajuste_qtd (do recebedor)
+    """
+    D = _to_dec(item.get("enviou"))
+    E = _to_dec(item.get("recebeu"))
+    ZERO = Decimal("0")
+    F = max(E - D, ZERO)
+    G = max(D - E, ZERO)
+    M = _to_dec(item.get("ajuste_qtd"))
+    return D, E, F, G, M
 
-    d_ptr, r_ptr = 0, 0
-    df["_doar"] = 0
-    df["_receber"] = 0
+def _q2(v: Decimal) -> Decimal:
+    """Quantiza em 2 casas (igual planilha)."""
+    return v.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-    while d_ptr < len(doadores) and r_ptr < len(recebedores):
-        di, d_sobra = doadores[d_ptr]
-        ri, r_falta = recebedores[r_ptr]
-        if d_sobra == 0:
-            d_ptr += 1
-            continue
-        if r_falta == 0:
-            r_ptr += 1
-            continue
-        mov = min(d_sobra, r_falta)
-        df.at[di, "sobra_disponivel"] -= mov
-        df.at[ri, "falta_necessaria"] -= mov
-        df.at[di, "_doar"] += mov
-        df.at[ri, "_receber"] += mov
-        doadores[d_ptr] = (di, d_sobra - mov)
-        recebedores[r_ptr] = (ri, r_falta - mov)
-        if doadores[d_ptr][1] == 0:
-            d_ptr += 1
-        if recebedores[r_ptr][1] == 0:
-            r_ptr += 1
+def calcular_rods_para_par(a: Dict, b: Dict) -> Tuple[Dict, Dict]:
+    """
+    RODs CUMULATIVOS (espelho da planilha):
+      N = M_recebedor (cap: N <= sobra_doador)
+      O12 = |N - G_recebedor|
+      Q = N + O12
+      T = Q + O12
+    Saída:
+      doador:  rod1=-N, rod2=-Q, rod3=-T
+      recebedor: rod1=+N, rod2=+Q, rod3=+T
+      final_reajustado = recebeu ± rod3 (cumulativo)
+    """
+    aF, bF = float(max(a.get("sobra", 0), 0)), float(max(b.get("sobra", 0), 0))
+    aG, bG = float(max(a.get("falta", 0), 0)), float(max(b.get("falta", 0), 0))
 
-    return df
+    # Sem par válido (ambos sobra ou ambos falta)
+    if (aF == 0 and bF == 0) or (aG == 0 and bG == 0):
+        for x in (a, b):
+            x.update({"rod1": 0.0, "rod2": 0.0, "rod3": 0.0,
+                      "final_reajustado": float(x.get("recebeu", 0)), "ajuste_total": 0.0})
+        return a, b
 
+    if aF > 0 and bG > 0:
+        doador, recebedor = a.copy(), b.copy()
+        order = ("a", "b")
+    elif bF > 0 and aG > 0:
+        doador, recebedor = b.copy(), a.copy()
+        order = ("b", "a")
+    else:
+        for x in (a, b):
+            x.update({"rod1": 0.0, "rod2": 0.0, "rod3": 0.0,
+                      "final_reajustado": float(x.get("recebeu", 0)), "ajuste_total": 0.0})
+        return a, b
 
-def redistribuir_em_rodadas(df: pd.DataFrame, n_rodadas: int = 3) -> pd.DataFrame:
-    # Ordena por prioridade (pulmão)
-    df = df.sort_values("pulmao", ascending=False).reset_index(drop=True)
+    Dd, Ed, Fd, _, _  = _extrair_basicos(doador)
+    Dr, Er, _, Gr, Mr = _extrair_basicos(recebedor)
 
-    for idx_rod, rod_col in enumerate(["rod1", "rod2", "rod3"][:n_rodadas], start=1):
-        df = _rodada_once(df)
-        # aplica resultado da rodada
-        df[rod_col] = df.get(rod_col, 0) - df["_doar"] + df["_receber"]
-        df.drop(columns=["_doar", "_receber"], inplace=True)
-        # Early stop se não há mais o que movimentar
-        if (df["sobra_disponivel"].sum() == 0) or (df["falta_necessaria"].sum() == 0):
-            break
+    # ROD1 (N) = M_recebedor com CAP na sobra do doador
+    N  = min(Mr, Fd)
+    O12 = abs(N - Gr)            # falta residual do recebedor após ROD1
+    Q  = N + O12                 # ROD2 (cumulativo)
+    T  = Q + O12                 # ROD3 (cumulativo)
 
-    # Saídas finais
-    df["final_reajustado"] = df["recebeu"] + df[["rod1", "rod2", "rod3"]].sum(axis=1)
-    df["ajuste_total"] = df["final_reajustado"] - df["recebeu"]
-    return df
+    # Cumulativos com 2 casas
+    Nq, Qq, Tq = _q2(N), _q2(Q), _q2(T)
+
+    # Atribui (doador negativo, recebedor positivo)
+    ad = doador.copy()
+    ar = recebedor.copy()
+
+    ad.update({"rod1": float(-Nq), "rod2": float(-Qq), "rod3": float(-Tq)})
+    ar.update({"rod1": float(+Nq), "rod2": float(+Qq), "rod3": float(+Tq)})
+
+    # final após rod3 = recebeu ± rod3 (cumulativo)
+    ad["final_reajustado"] = float(_to_dec(ad["recebeu"]) - Tq)
+    ar["final_reajustado"] = float(_to_dec(ar["recebeu"]) + Tq)
+    ad["ajuste_total"] = float(-Tq)
+    ar["ajuste_total"] = float(+Tq)
+
+    # devolver na ordem original (a, b)
+    if order == ("a", "b"):
+        return ad, ar
+    else:
+        return ar, ad
+
+def parear_e_aplicar_rods(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Pareia doadores (sobra>0) e recebedores (falta>0) por 'pulmão'
+    e aplica calcular_rods_para_par() em cada par.
+    Itens não pareados: final = recebeu; ajuste_total = 0.
+    """
+    out = df.copy()
+    for c in ["rod1", "rod2", "rod3", "final_reajustado", "ajuste_total"]:
+        if c not in out.columns:
+            out[c] = 0.0
+
+    doadores = out.index[out["sobra"] > 0].tolist()
+    recebedores = out.index[out["falta"] > 0].tolist()
+    doadores.sort(key=lambda i: out.loc[i, "pulmao"], reverse=True)
+    recebedores.sort(key=lambda i: out.loc[i, "pulmao"], reverse=True)
+
+    for i, j in zip(doadores, recebedores):
+        ai = out.loc[i].to_dict()
+        bj = out.loc[j].to_dict()
+        ra, rb = calcular_rods_para_par(ai, bj)
+        for k, r in zip([i, j], [ra, rb]):
+            out.at[k, "rod1"] = r["rod1"]
+            out.at[k, "rod2"] = r["rod2"]
+            out.at[k, "rod3"] = r["rod3"]
+            out.at[k, "final_reajustado"] = r["final_reajustado"]
+            out.at[k, "ajuste_total"] = r["ajuste_total"]
+
+    # itens não pareados
+    mask = out["final_reajustado"].isna()
+    out.loc[mask, "final_reajustado"] = out.loc[mask, "recebeu"]
+    out.loc[mask, "ajuste_total"] = 0.0
+    return out
