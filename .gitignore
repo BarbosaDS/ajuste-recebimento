@@ -1,0 +1,18 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Streamlit
+.streamlit/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Notebooks/artefatos
+*.ipynb_checkpoints/
+
+# Dados temporários
+*.tmp
+*.log
