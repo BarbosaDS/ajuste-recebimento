@@ -18,12 +18,12 @@ with st.expander("📘 Como usar", expanded=True):
         - `recebeu` (número)
         - `limite_admissivel_%` (ex.: **0.20** para 0,20%)
 
-        **Como funciona:**
-        - Calculamos **sobra** e **falta** por linha.
-        - O **ajuste em quantidade (M)** do recebedor vira **ROD1 = N** no doador (com cap pela sobra do doador).
-        - **RODs são cumulativos**: `ROD1 = N`, `ROD2 = Q = N + O12`, `ROD3 = T = Q + O12`.
-        - `final_reajustado` usa o **ROD3** (cumulativo): `recebeu ± T`.
-        - Sinais: doador **negativo** (doa), recebedor **positivo** (recebe).
+        **Como funciona (espelho da planilha)**:
+        - Calculamos **sobra/falta** e o **ajuste_qtd (M)** com base no limite admissível.
+        - **quantidade_transferida** = `min(M_recebedor, sobra_doador)` (coluna **N** na planilha).
+        - **ajuste_item** = residual após o ajuste (coluna **O**).
+        - **novo_limite_%** = `%` após o ajuste (coluna **P**).
+        - `final_reajustado` = `recebeu ± quantidade_transferida`.
         """
     )
 
@@ -65,36 +65,17 @@ if st.button("Calcular par (A ↔ B)"):
 
     mostrar = out[
         [
-            "produto",
-            "enviou",
-            "recebeu",
-            "limite_admissivel_%",
-            "falta",
-            "sobra",
-            "limites_atuais_%",
-            "ajuste_%",
-            "ajuste_qtd",
-            "rod1",
-            "rod2",
-            "rod3",
-            "final_reajustado",
-            "ajuste_total",
+            "produto","enviou","recebeu","limite_admissivel_%",
+            "falta","sobra","limites_atuais_%","ajuste_%","ajuste_qtd",
+            "quantidade_transferida","ajuste_item","novo_limite_%",
+            "final_reajustado","ajuste_total",
         ]
     ].copy()
     num = [
-        "enviou",
-        "recebeu",
-        "limite_admissivel_%",
-        "falta",
-        "sobra",
-        "limites_atuais_%",
-        "ajuste_%",
-        "ajuste_qtd",
-        "rod1",
-        "rod2",
-        "rod3",
-        "final_reajustado",
-        "ajuste_total",
+        "enviou","recebeu","limite_admissivel_%","falta","sobra",
+        "limites_atuais_%","ajuste_%","ajuste_qtd",
+        "quantidade_transferida","ajuste_item","novo_limite_%",
+        "final_reajustado","ajuste_total",
     ]
     mostrar[num] = mostrar[num].applymap(lambda x: round(float(x), 2))
     st.dataframe(mostrar, use_container_width=True)
@@ -109,12 +90,11 @@ st.subheader("Em lote (CSV/XLSX)")
 example = pd.DataFrame(
     [
         {"produto": "A", "enviou": 100, "recebeu": 120, "limite_admissivel_%": 0.20},
-        {"produto": "B", "enviou": 100, "recebeu": 90, "limite_admissivel_%": 0.20},
-        {"produto": "C", "enviou": 80, "recebeu": 70, "limite_admissivel_%": 0.20},
+        {"produto": "B", "enviou": 100, "recebeu": 90,  "limite_admissivel_%": 0.20},
+        {"produto": "C", "enviou": 80,  "recebeu": 70,  "limite_admissivel_%": 0.20},
         {"produto": "D", "enviou": 200, "recebeu": 210, "limite_admissivel_%": 0.20},
     ]
 )
-
 buf = io.BytesIO()
 with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
     example.to_excel(writer, index=False, sheet_name="entrada")
@@ -132,7 +112,6 @@ if up:
     if faltantes:
         st.error(f"Colunas faltando: {faltantes}. Use o template.")
     else:
-        # coerção numérica e limpeza básica
         for c in ["enviou", "recebeu", "limite_admissivel_%"]:
             df_in[c] = pd.to_numeric(df_in[c], errors="coerce")
         df_in = df_in.dropna(subset=["enviou", "recebeu", "limite_admissivel_%"])
@@ -140,22 +119,12 @@ if up:
         df = preparar_dataframe(df_in)
         df_out = parear_e_aplicar_rods(df)
 
-        # formatar com 2 casas
         out = df_out.copy()
         num_cols = [
-            "enviou",
-            "recebeu",
-            "limite_admissivel_%",
-            "falta",
-            "sobra",
-            "limites_atuais_%",
-            "ajuste_%",
-            "ajuste_qtd",
-            "rod1",
-            "rod2",
-            "rod3",
-            "final_reajustado",
-            "ajuste_total",
+            "enviou","recebeu","limite_admissivel_%","falta","sobra",
+            "limites_atuais_%","ajuste_%","ajuste_qtd",
+            "quantidade_transferida","ajuste_item","novo_limite_%",
+            "final_reajustado","ajuste_total",
         ]
         out[num_cols] = out[num_cols].applymap(lambda x: round(float(x), 2))
 

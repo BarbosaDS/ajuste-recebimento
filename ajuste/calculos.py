@@ -4,13 +4,12 @@ import pandas as pd
 
 def calcular_diferencas_basicas(row: Dict) -> Dict:
     """
-    Mantém memória de cálculo em Decimal (sem arredondar para inteiro).
-    Regras (iguais à planilha):
+    Memória de cálculo base :
       falta = max(enviou - recebeu, 0)
       sobra = max(recebeu - enviou, 0)
       limites_atuais_% = 0 se enviou=0, senão (max(falta, sobra)/enviou)*100
       ajuste_% = max(limites_atuais_% - limite_admissivel_%, 0)
-      ajuste_qtd (M) = (ajuste_% * enviou) / 100   # decimal, sem round p/ int
+      ajuste_qtd (M) = (ajuste_% * enviou) / 100   # decimal, sem truncar
     """
     enviou  = Decimal(str(row.get("enviou", 0) or 0))
     recebeu = Decimal(str(row.get("recebeu", 0) or 0))
@@ -22,12 +21,11 @@ def calcular_diferencas_basicas(row: Dict) -> Dict:
 
     atuais_pct = ZERO if enviou == ZERO else (max(falta_bruta, sobra_bruta) / enviou) * Decimal("100")
     ajuste_pct = max(atuais_pct - lim, ZERO)
-    ajuste_qtd = (ajuste_pct * enviou) / Decimal("100")  # mantém casas decimais
+    ajuste_qtd = (ajuste_pct * enviou) / Decimal("100")
 
     sobra_disp = max(sobra_bruta - ajuste_qtd, ZERO)
     falta_need = max(falta_bruta - ajuste_qtd, ZERO)
 
-    # Saída como float (para DF/Streamlit), mas o cálculo acima foi todo em Decimal
     return {
         **row,
         "falta": float(falta_bruta),
@@ -38,9 +36,12 @@ def calcular_diferencas_basicas(row: Dict) -> Dict:
         "sobra_disponivel": float(sobra_disp),
         "falta_necessaria": float(falta_need),
         "pulmao": float(abs(enviou - recebeu)),
-        "rod1": 0.0,
-        "rod2": 0.0,
-        "rod3": 0.0,
+
+        "quantidade_transferida": 0.0,  
+        "ajuste_item": 0.0,             
+        "novo_limite_%": 0.0,           
+        "final_reajustado": float(recebeu),
+        "ajuste_total": 0.0,
     }
 
 def preparar_dataframe(df_in: pd.DataFrame) -> pd.DataFrame:
@@ -54,6 +55,7 @@ def preparar_dataframe(df_in: pd.DataFrame) -> pd.DataFrame:
         "produto","enviou","recebeu","limite_admissivel_%",
         "falta","sobra","limites_atuais_%","ajuste_%","ajuste_qtd",
         "sobra_disponivel","falta_necessaria","pulmao",
-        "rod1","rod2","rod3"
+        "quantidade_transferida","ajuste_item","novo_limite_%",
+        "final_reajustado","ajuste_total",
     ]
     return df[cols]
